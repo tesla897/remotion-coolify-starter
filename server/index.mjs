@@ -19,7 +19,7 @@ app.use('/renders', express.static(rendersDir));
 
 const port = Number(process.env.PORT || 3000);
 const studioPort = Number(process.env.STUDIO_PORT || 3100);
-const studioEnabled = process.env.STUDIO_ENABLED !== 'false';
+const studioEnabled = process.env.STUDIO_ENABLED === 'true';
 const studioTarget = `http://127.0.0.1:${studioPort}`;
 const renderApiKey = process.env.RENDER_API_KEY?.trim() || '';
 

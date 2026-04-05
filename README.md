@@ -26,15 +26,22 @@ npm run dev
 
 Open Remotion Studio locally and edit the composition.
 
-To run the combined Studio + API server locally:
+To run the API locally:
 
 ```bash
 npm start
 ```
 
 Then open:
-- `http://localhost:3000/` for Studio
 - `http://localhost:3000/health` for the API health check
+
+Studio is disabled by default in `npm start`. To temporarily enable it:
+
+```bash
+STUDIO_ENABLED=true npm start
+```
+
+Then open `http://localhost:3000/` for Studio.
 
 ## Sample render request
 
@@ -86,6 +93,7 @@ curl -X POST http://localhost:3000/render \
 5. Optional env vars:
    - `PORT=3000`
    - `BROWSER_EXECUTABLE=/usr/bin/chromium`
+   - `STUDIO_ENABLED=true`
    - `STUDIO_PORT=3100`
    - `RENDER_API_KEY=your-secret-key`
 6. Deploy.
@@ -95,6 +103,7 @@ curl -X POST http://localhost:3000/render \
 
 - This is a starter, not a finished render farm.
 - Rendered videos are written to `/app/renders`.
+- Studio is disabled by default. Set `STUDIO_ENABLED=true` only when you want temporary browser access to Remotion Studio.
 - If `RENDER_API_KEY` is set, `/render` requires either:
   - `x-api-key: your-secret-key`
   - `Authorization: Bearer your-secret-key`
