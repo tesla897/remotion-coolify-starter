@@ -21,6 +21,7 @@ const port = Number(process.env.PORT || 3000);
 const studioPort = Number(process.env.STUDIO_PORT || 3100);
 const studioEnabled = process.env.STUDIO_ENABLED !== 'false';
 const studioTarget = `http://127.0.0.1:${studioPort}`;
+const renderApiKey = process.env.RENDER_API_KEY?.trim() || '';
 
 const defaultProps = {
   slides: [
@@ -78,6 +79,47 @@ proxy.on('error', (error, req, res) => {
   }
 });
 
+const getRequestApiKey = (req) => {
+  const headerValue = req.get('x-api-key');
+  if (headerValue) {
+    return headerValue.trim();
+  }
+
+  const authHeader = req.get('authorization');
+  if (!authHeader) {
+    return '';
+  }
+
+  const [scheme, token] = authHeader.split(/\s+/, 2);
+  if (scheme?.toLowerCase() !== 'bearer' || !token) {
+    return '';
+  }
+
+  return token.trim();
+};
+
+const requireRenderApiKey = (req, res, next) => {
+  if (!renderApiKey) {
+    next();
+    return;
+  }
+
+  const providedKey = getRequestApiKey(req);
+  const providedBuffer = Buffer.from(providedKey);
+  const expectedBuffer = Buffer.from(renderApiKey);
+
+  if (providedKey && providedBuffer.length == expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    next();
+    return;
+  }
+
+  res.status(401).json({
+    ok: false,
+    message: 'Unauthorized',
+    hint: 'Provide x-api-key or Authorization: Bearer <key>'
+  });
+};
+
 const startStudio = () => {
   if (!studioEnabled) {
     console.log('Studio disabled.');
@@ -119,7 +161,7 @@ app.get('/sample-payload', (_req, res) => {
   res.json({props: defaultProps});
 });
 
-app.post('/render', async (req, res) => {
+app.post('/render', requireRenderApiKey, async (req, res) => {
   try {
     await mkdir(rendersDir, {recursive: true});
     await mkdir(tempDir, {recursive: true});

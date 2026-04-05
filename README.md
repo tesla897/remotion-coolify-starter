@@ -6,12 +6,14 @@ A minimal self-hosted Remotion render service for Coolify + Pangolin.
 
 - A simple Remotion composition with `wipe` and `fade` transitions
 - An HTTP API to render videos on demand
+- Optional API key protection for `/render`
 - A Dockerfile that is straightforward to deploy in Coolify
 - Static hosting for rendered files from `/renders`
 
 ## Endpoints
 
 - `GET /health`
+- `GET /sample-payload`
 - `POST /render`
 - `GET /renders/<file>.mp4`
 
@@ -24,11 +26,15 @@ npm run dev
 
 Open Remotion Studio locally and edit the composition.
 
-To run the API locally:
+To run the combined Studio + API server locally:
 
 ```bash
 npm start
 ```
+
+Then open:
+- `http://localhost:3000/` for Studio
+- `http://localhost:3000/health` for the API health check
 
 ## Sample render request
 
@@ -80,6 +86,8 @@ curl -X POST http://localhost:3000/render \
 5. Optional env vars:
    - `PORT=3000`
    - `BROWSER_EXECUTABLE=/usr/bin/chromium`
+   - `STUDIO_PORT=3100`
+   - `RENDER_API_KEY=your-secret-key`
 6. Deploy.
 7. Route your Pangolin domain to the Coolify service.
 
@@ -87,9 +95,11 @@ curl -X POST http://localhost:3000/render \
 
 - This is a starter, not a finished render farm.
 - Rendered videos are written to `/app/renders`.
+- If `RENDER_API_KEY` is set, `/render` requires either:
+  - `x-api-key: your-secret-key`
+  - `Authorization: Bearer your-secret-key`
 - For production, you will likely want:
   - object storage upload after render
   - request queueing
-  - auth
   - cleanup of old renders
   - concurrency limits
