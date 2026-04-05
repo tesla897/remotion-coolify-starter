@@ -4,6 +4,8 @@ import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
+import http from 'node:http';
+import httpProxy from 'http-proxy';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +18,9 @@ app.use(express.json({limit: '5mb'}));
 app.use('/renders', express.static(rendersDir));
 
 const port = Number(process.env.PORT || 3000);
+const studioPort = Number(process.env.STUDIO_PORT || 3100);
+const studioEnabled = process.env.STUDIO_ENABLED !== 'false';
+const studioTarget = `http://127.0.0.1:${studioPort}`;
 
 const defaultProps = {
   slides: [
@@ -45,12 +50,65 @@ const defaultProps = {
   ]
 };
 
-const getRemotionBin = () => {
+const getRemotionCommand = (subcommandArgs) => {
   if (process.platform === 'win32') {
-    return path.join(projectRoot, 'node_modules', '.bin', 'remotion.cmd');
+    return {
+      command: 'cmd.exe',
+      args: ['/c', path.join(projectRoot, 'node_modules', '.bin', 'remotion.cmd'), ...subcommandArgs]
+    };
   }
 
-  return path.join(projectRoot, 'node_modules', '.bin', 'remotion');
+  return {
+    command: path.join(projectRoot, 'node_modules', '.bin', 'remotion'),
+    args: subcommandArgs
+  };
+};
+
+const proxy = httpProxy.createProxyServer({
+  target: studioTarget,
+  ws: true,
+  changeOrigin: true,
+});
+
+proxy.on('error', (error, req, res) => {
+  const message = error instanceof Error ? error.message : 'Unknown proxy error';
+  if (res && typeof res.writeHead === 'function' && !res.headersSent) {
+    res.writeHead(502, {'Content-Type': 'application/json'});
+    res.end(JSON.stringify({ok: false, message: 'Studio proxy failed', error: message}));
+  }
+});
+
+const startStudio = () => {
+  if (!studioEnabled) {
+    console.log('Studio disabled.');
+    return null;
+  }
+
+  const {command, args} = getRemotionCommand(['studio', 'src/index.jsx', '--port', String(studioPort)]);
+
+  const child = spawn(command, args, {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      BROWSER: 'none',
+      CI: '1'
+    },
+      stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  child.stdout.on('data', (chunk) => {
+    process.stdout.write(`[studio] ${chunk.toString()}`);
+  });
+
+  child.stderr.on('data', (chunk) => {
+    process.stderr.write(`[studio] ${chunk.toString()}`);
+  });
+
+  child.on('close', (code) => {
+    console.log(`Studio process exited with code ${code}`);
+  });
+
+  return child;
 };
 
 app.get('/health', (_req, res) => {
@@ -73,8 +131,7 @@ app.post('/render', async (req, res) => {
 
     await writeFile(propsPath, JSON.stringify(props), 'utf8');
 
-    const remotionBin = getRemotionBin();
-    const args = [
+    const renderArgs = [
       'render',
       'src/index.jsx',
       'ExplainerDeck',
@@ -84,10 +141,12 @@ app.post('/render', async (req, res) => {
     ];
 
     if (process.env.BROWSER_EXECUTABLE) {
-      args.push('--browser-executable', process.env.BROWSER_EXECUTABLE);
+      renderArgs.push('--browser-executable', process.env.BROWSER_EXECUTABLE);
     }
 
-    const child = spawn(remotionBin, args, {
+    const {command, args} = getRemotionCommand(renderArgs);
+
+    const child = spawn(command, args, {
       cwd: projectRoot,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -116,7 +175,9 @@ app.post('/render', async (req, res) => {
         return;
       }
 
-      const origin = `${req.protocol}://${req.get('host')}`;
+      const forwardedProto = req.headers['x-forwarded-proto'];
+      const protocol = typeof forwardedProto === 'string' ? forwardedProto : req.protocol;
+      const origin = `${protocol}://${req.get('host')}`;
       res.json({
         ok: true,
         fileName: safeName,
@@ -133,6 +194,40 @@ app.post('/render', async (req, res) => {
   }
 });
 
-app.listen(port, '0.0.0.0', () => {
+app.use((req, res) => {
+  if (!studioEnabled) {
+    res.status(404).json({ok: false, message: 'Studio disabled'});
+    return;
+  }
+
+  proxy.web(req, res, {target: studioTarget});
+});
+
+const studioProcess = startStudio();
+
+const server = http.createServer(app);
+server.on('upgrade', (req, socket, head) => {
+  if (!studioEnabled) {
+    socket.destroy();
+    return;
+  }
+
+  proxy.ws(req, socket, head, {target: studioTarget});
+});
+
+const shutdown = () => {
+  if (studioProcess && !studioProcess.killed) {
+    studioProcess.kill();
+  }
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+server.listen(port, '0.0.0.0', () => {
   console.log(`Remotion render service listening on :${port}`);
+  if (studioEnabled) {
+    console.log(`Remotion Studio proxied via :${port} -> ${studioTarget}`);
+  }
 });
