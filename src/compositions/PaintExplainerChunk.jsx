@@ -59,24 +59,82 @@ const getPresentation = (transition, durationInFrames) => {
   };
 };
 
-const SegmentImage = ({src, zoom, logoUrl}) => {
-  const frame = useCurrentFrame();
-  const {durationInFrames, width, height} = useVideoConfig();
-  const isSubtleZoom = zoom === 'subtle';
-  const zoomProgress = interpolate(
-    frame,
-    [0, Math.max(1, durationInFrames - 1)],
-    [0, 1],
-    {
-      easing: Easing.bezier(0.22, 0.61, 0.36, 1),
-      extrapolateLeft: 'clamp',
-      extrapolateRight: 'clamp',
-    },
-  );
+const resolveMotion = (segment) => {
+  const explicitMode = String(segment.motionMode || '').trim();
+  if (explicitMode) {
+    return {
+      mode: explicitMode,
+      changeAtSec:
+        segment.motionChangeAtSec == null ? null : Number(segment.motionChangeAtSec),
+      direction: segment.motionDirection || 'in',
+    };
+  }
 
-  const scale = isSubtleZoom
-    ? interpolate(zoomProgress, [0, 1], [1, 1.05], {extrapolateRight: 'clamp'})
-    : 1;
+  return {
+    mode: segment.zoom === 'subtle' ? 'subtle' : 'static',
+    changeAtSec: null,
+    direction: segment.zoom === 'subtle' ? 'in' : 'none',
+  };
+};
+
+const SegmentImage = ({segment, logoUrl}) => {
+  const frame = useCurrentFrame();
+  const {durationInFrames, width, height, fps} = useVideoConfig();
+  const motion = resolveMotion(segment);
+  const fullProgress = interpolate(frame, [0, Math.max(1, durationInFrames - 1)], [0, 1], {
+    easing: Easing.bezier(0.22, 0.61, 0.36, 1),
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  const changeFrame =
+    motion.changeAtSec == null
+      ? Math.round(durationInFrames / 2)
+      : Math.max(
+          1,
+          Math.min(durationInFrames - 1, Math.round(motion.changeAtSec * fps)),
+        );
+
+  let scale = 1;
+  let translateX = 0;
+  let translateY = 0;
+  let transformOrigin = '50% 50%';
+
+  if (motion.mode === 'subtle') {
+    scale = interpolate(fullProgress, [0, 1], [1, 1.04], {extrapolateRight: 'clamp'});
+  } else if (motion.mode === 'two_beat') {
+    if (frame < changeFrame) {
+      const firstProgress = interpolate(frame, [0, changeFrame], [0, 1], {
+        easing: Easing.bezier(0.22, 0.61, 0.36, 1),
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+      });
+
+      scale = interpolate(firstProgress, [0, 1], [1, 1.02], {extrapolateRight: 'clamp'});
+    } else {
+      const secondProgress = interpolate(
+        frame,
+        [changeFrame, Math.max(changeFrame + 1, durationInFrames - 1)],
+        [0, 1],
+        {
+          easing: Easing.bezier(0.22, 0.61, 0.36, 1),
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        },
+      );
+
+      scale = interpolate(secondProgress, [0, 1], [1.08, 1.14], {
+        extrapolateRight: 'clamp',
+      });
+      translateX = interpolate(secondProgress, [0, 1], [0, -14], {
+        extrapolateRight: 'clamp',
+      });
+      translateY = interpolate(secondProgress, [0, 1], [0, 8], {
+        extrapolateRight: 'clamp',
+      });
+      transformOrigin = motion.direction === 'in' ? '55% 45%' : '50% 50%';
+    }
+  }
 
   return (
     <AbsoluteFill
@@ -90,11 +148,12 @@ const SegmentImage = ({src, zoom, logoUrl}) => {
         style={{
           justifyContent: 'center',
           alignItems: 'center',
-          transform: `scale(${scale})`,
+          transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
+          transformOrigin,
         }}
       >
         <Img
-          src={src}
+          src={segment.src}
           style={{
             width,
             height,
@@ -149,8 +208,7 @@ const SegmentAsset = ({segment, logoUrl}) => {
 
   return (
     <SegmentImage
-      src={segment.src}
-      zoom={segment.zoom}
+      segment={segment}
       logoUrl={logoUrl}
     />
   );
