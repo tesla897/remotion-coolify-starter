@@ -5,6 +5,7 @@ A minimal self-hosted Remotion render service for Coolify + Pangolin.
 ## What this gives you
 
 - A simple Remotion composition with `wipe` and `fade` transitions
+- Zod-backed composition schemas so Studio controls and API payloads stay validated
 - An HTTP API to render videos on demand
 - Optional API key protection for `/render`
 - A Dockerfile that is straightforward to deploy in Coolify
@@ -128,6 +129,7 @@ curl -X POST http://localhost:3000/render \
   - `ExplainerDeck` for the original demo slides
   - `PaintExplainerChunk` for the image/video segment payload used by the new Paint Explainer workflows
 - `PaintExplainerChunk` accepts an optional `logoUrl` and overlays it in the top-right corner of image segments.
+- `/render` now validates composition props before starting a Chromium render.
 - Studio is disabled by default. Set `STUDIO_ENABLED=true` only when you want temporary browser access to Remotion Studio.
 - If `RENDER_API_KEY` is set, `/render` and the local `/renders/*` fallback route require either:
   - `x-api-key: your-secret-key`

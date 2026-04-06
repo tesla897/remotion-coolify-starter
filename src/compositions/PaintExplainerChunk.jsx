@@ -5,7 +5,6 @@ import {
   Easing,
   Img,
   OffthreadVideo,
-  Sequence,
   interpolate,
   useCurrentFrame,
   useVideoConfig,
@@ -13,33 +12,13 @@ import {
 import {TransitionSeries, linearTiming} from '@remotion/transitions';
 import {fade} from '@remotion/transitions/fade';
 import {wipe} from '@remotion/transitions/wipe';
-
-const defaultFps = 24;
-const defaultWidth = 1280;
-const defaultHeight = 720;
-const transitionDurationSec = 0.35;
-const captionChunkSize = 5;
-
-const normalizeTransition = (transition) => {
-  const value = String(transition || '').toLowerCase();
-  if (!value) {
-    return null;
-  }
-
-  if (value === 'fade' || value === 'dissolve') {
-    return {type: 'fade'};
-  }
-
-  if (value === 'wipeleft') {
-    return {type: 'wipe', direction: 'from-right'};
-  }
-
-  if (value === 'wiperight') {
-    return {type: 'wipe', direction: 'from-left'};
-  }
-
-  return {type: 'fade'};
-};
+import {
+  defaultPaintExplainerChunkProps,
+  getChunkTransitionDurationInFrames,
+  getPaintExplainerChunkDurationInFrames,
+  normalizeChunkTransition,
+  PAINT_EXPLAINER_CHUNK_CONFIG,
+} from './schemas';
 
 const getPresentation = (transition, durationInFrames) => {
   if (!transition) {
@@ -243,8 +222,12 @@ const normalizeCaptionWords = (words) => {
 const buildCaptionChunks = (words) => {
   const chunks = [];
 
-  for (let index = 0; index < words.length; index += captionChunkSize) {
-    const slice = words.slice(index, index + captionChunkSize);
+  for (
+    let index = 0;
+    index < words.length;
+    index += PAINT_EXPLAINER_CHUNK_CONFIG.captionChunkSize
+  ) {
+    const slice = words.slice(index, index + PAINT_EXPLAINER_CHUNK_CONFIG.captionChunkSize);
     if (!slice.length) {
       continue;
     }
@@ -349,7 +332,7 @@ export const PaintExplainerChunk = ({
   captions = null,
 }) => {
   const {fps} = useVideoConfig();
-  const transitionFrames = Math.max(1, Math.round(transitionDurationSec * fps));
+  const transitionFrames = getChunkTransitionDurationInFrames(fps);
 
   return (
     <AbsoluteFill style={{backgroundColor: '#000'}}>
@@ -357,25 +340,21 @@ export const PaintExplainerChunk = ({
       <TransitionSeries name="PaintExplainerChunk">
         {segments.map((segment, index) => {
           const normalizedTransition =
-            index > 1 ? normalizeTransition(segment.transition) : null;
-          const durationFrames =
-            Math.max(1, Math.round((segment.durationSec || 0) * fps)) +
-            (normalizedTransition ? transitionFrames : 0);
+            index > 0 ? normalizeChunkTransition(segment.transition) : null;
+          const durationFrames = Math.max(1, Math.round((segment.durationSec || 0) * fps));
           const transition = getPresentation(normalizedTransition, transitionFrames);
 
           return (
             <React.Fragment key={`${segment.segmentId}-${segment.src}`}>
-              <TransitionSeries.Sequence durationInFrames={durationFrames}>
-                <Sequence durationInFrames={durationFrames}>
-                  <SegmentAsset segment={segment} logoUrl={logoUrl} />
-                </Sequence>
-              </TransitionSeries.Sequence>
-              {index < segments.length - 1 && transition ? (
+              {index > 0 && transition ? (
                 <TransitionSeries.Transition
                   presentation={transition.presentation}
                   timing={transition.timing}
                 />
               ) : null}
+              <TransitionSeries.Sequence durationInFrames={durationFrames}>
+                <SegmentAsset segment={segment} logoUrl={logoUrl} />
+              </TransitionSeries.Sequence>
             </React.Fragment>
           );
         })}
@@ -386,20 +365,16 @@ export const PaintExplainerChunk = ({
 };
 
 export const calculateChunkMetadata = ({props}) => {
-  const fps = Number(props?.fps || defaultFps);
-  const width = Number(props?.width || defaultWidth);
-  const height = Number(props?.height || defaultHeight);
-  const segments = props?.segments ?? [];
-
-  const durationInFrames = segments.reduce((acc, segment, index) => {
-    const segmentFrames = Math.max(1, Math.round((segment.durationSec || 0) * fps));
-    return acc + segmentFrames;
-  }, 0);
+  const fps = Number(props?.fps || PAINT_EXPLAINER_CHUNK_CONFIG.fps);
+  const width = Number(props?.width || PAINT_EXPLAINER_CHUNK_CONFIG.width);
+  const height = Number(props?.height || PAINT_EXPLAINER_CHUNK_CONFIG.height);
+  const segments = props?.segments ?? defaultPaintExplainerChunkProps.segments;
+  const durationInFrames = getPaintExplainerChunkDurationInFrames({segments, fps});
 
   return {
     fps,
     width,
     height,
-    durationInFrames: Math.max(durationInFrames, fps),
+    durationInFrames,
   };
 };
