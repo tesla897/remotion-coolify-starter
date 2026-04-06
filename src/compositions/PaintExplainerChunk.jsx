@@ -340,21 +340,23 @@ export const PaintExplainerChunk = ({
       <TransitionSeries name="PaintExplainerChunk">
         {segments.map((segment, index) => {
           const normalizedTransition =
-            index > 0 ? normalizeChunkTransition(segment.transition) : null;
-          const durationFrames = Math.max(1, Math.round((segment.durationSec || 0) * fps));
+            index > 1 ? normalizeChunkTransition(segment.transition) : null;
+          const durationFrames =
+            Math.max(1, Math.round((segment.durationSec || 0) * fps)) +
+            (normalizedTransition ? transitionFrames : 0);
           const transition = getPresentation(normalizedTransition, transitionFrames);
 
           return (
             <React.Fragment key={`${segment.segmentId}-${segment.src}`}>
-              {index > 0 && transition ? (
+              <TransitionSeries.Sequence durationInFrames={durationFrames}>
+                <SegmentAsset segment={segment} logoUrl={logoUrl} />
+              </TransitionSeries.Sequence>
+              {index < segments.length - 1 && transition ? (
                 <TransitionSeries.Transition
                   presentation={transition.presentation}
                   timing={transition.timing}
                 />
               ) : null}
-              <TransitionSeries.Sequence durationInFrames={durationFrames}>
-                <SegmentAsset segment={segment} logoUrl={logoUrl} />
-              </TransitionSeries.Sequence>
             </React.Fragment>
           );
         })}
