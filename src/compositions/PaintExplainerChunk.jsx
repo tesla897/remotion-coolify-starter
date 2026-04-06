@@ -390,13 +390,10 @@ export const calculateChunkMetadata = ({props}) => {
   const width = Number(props?.width || defaultWidth);
   const height = Number(props?.height || defaultHeight);
   const segments = props?.segments ?? [];
-  const transitionFrames = Math.max(1, Math.round(transitionDurationSec * fps));
 
   const durationInFrames = segments.reduce((acc, segment, index) => {
-    const normalizedTransition =
-      index > 1 ? normalizeTransition(segment.transition) : null;
     const segmentFrames = Math.max(1, Math.round((segment.durationSec || 0) * fps));
-    return acc + segmentFrames + (normalizedTransition ? transitionFrames : 0);
+    return acc + segmentFrames;
   }, 0);
 
   return {
