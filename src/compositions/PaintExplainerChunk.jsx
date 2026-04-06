@@ -58,7 +58,7 @@ const getPresentation = (transition, durationInFrames) => {
   };
 };
 
-const SegmentImage = ({src, zoom, chapterTitle}) => {
+const SegmentImage = ({src, zoom, logoUrl}) => {
   const frame = useCurrentFrame();
   const {durationInFrames, width, height, fps} = useVideoConfig();
   const isSubtleZoom = zoom === 'subtle';
@@ -103,31 +103,35 @@ const SegmentImage = ({src, zoom, chapterTitle}) => {
           }}
         />
       </AbsoluteFill>
-      {chapterTitle ? (
+      {logoUrl ? (
         <div
           style={{
             position: 'absolute',
-            top: 28,
-            left: 28,
-            padding: '12px 20px',
-            borderRadius: 999,
+            top: 20,
+            right: 20,
+            width: 72,
+            height: 72,
+            padding: 4,
             border: '4px solid #111',
-            backgroundColor: 'rgba(255,255,255,0.9)',
-            fontFamily: 'Arial, sans-serif',
-            fontWeight: 700,
-            fontSize: 26,
-            color: '#111',
-            textTransform: 'uppercase',
+            backgroundColor: 'rgba(255,255,255,0.96)',
+            boxSizing: 'border-box',
           }}
         >
-          {chapterTitle}
+          <Img
+            src={logoUrl}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+            }}
+          />
         </div>
       ) : null}
     </AbsoluteFill>
   );
 };
 
-const SegmentAsset = ({segment}) => {
+const SegmentAsset = ({segment, logoUrl}) => {
   if (segment.assetType === 'video') {
     return (
       <AbsoluteFill style={{backgroundColor: '#000'}}>
@@ -147,12 +151,12 @@ const SegmentAsset = ({segment}) => {
     <SegmentImage
       src={segment.src}
       zoom={segment.zoom}
-      chapterTitle={segment.chapterTitle}
+      logoUrl={logoUrl}
     />
   );
 };
 
-export const PaintExplainerChunk = ({segments = [], audioUrl = null}) => {
+export const PaintExplainerChunk = ({segments = [], audioUrl = null, logoUrl = null}) => {
   const {fps} = useVideoConfig();
   const transitionFrames = Math.max(1, Math.round(transitionDurationSec * fps));
 
@@ -172,7 +176,7 @@ export const PaintExplainerChunk = ({segments = [], audioUrl = null}) => {
             <React.Fragment key={`${segment.segmentId}-${segment.src}`}>
               <TransitionSeries.Sequence durationInFrames={durationFrames}>
                 <Sequence durationInFrames={durationFrames}>
-                  <SegmentAsset segment={segment} />
+                  <SegmentAsset segment={segment} logoUrl={logoUrl} />
                 </Sequence>
               </TransitionSeries.Sequence>
               {index < segments.length - 1 && transition ? (
