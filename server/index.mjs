@@ -9,6 +9,12 @@ import http from 'node:http';
 import httpProxy from 'http-proxy';
 import {GetObjectCommand, PutObjectCommand, S3Client} from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
+import {
+  defaultExplainerDeckProps,
+  defaultPaintExplainerChunkProps,
+  ExplainerDeckPropsSchema,
+  PaintExplainerChunkPropsSchema,
+} from '../src/compositions/schemas.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,71 +59,24 @@ const s3Client = storageEnabled
 const app = express();
 app.use(express.json({limit: '5mb'}));
 
-const defaultProps = {
-  slides: [
-    {
-      title: 'FRESH AIR AFTER TIBERIUS',
-      subtitle: 'A new face seems like a reset for Rome.',
-      background: '#f3f0e8',
-      accent: '#f4c542',
-      durationInFrames: 90,
-      transition: {type: 'wipe', direction: 'from-right', durationInFrames: 10}
-    },
-    {
-      title: 'YEAR 1 GOES WRONG',
-      subtitle: 'Optimism turns into instability.',
-      background: '#f5f5f5',
-      accent: '#e05454',
-      durationInFrames: 90,
-      transition: {type: 'fade', durationInFrames: 10}
-    },
-    {
-      title: 'ILLNESS OR POWER?',
-      subtitle: 'Two explanations compete to define the emperor.',
-      background: '#f3f0e8',
-      accent: '#7f65d6',
-      durationInFrames: 90
-    }
-  ]
+const getDefaultPropsForComposition = (compositionId) => {
+  if (compositionId === 'PaintExplainerChunk') {
+    return defaultPaintExplainerChunkProps;
+  }
+
+  return defaultExplainerDeckProps;
 };
 
-const defaultChunkProps = {
-  compositionId: 'PaintExplainerChunk',
-  fps: 24,
-  width: 1280,
-  height: 720,
-  audioUrl: null,
-  captions: {
-    words: [
-      {text: 'Fresh', startSec: 0.2, endSec: 0.55},
-      {text: 'air', startSec: 0.55, endSec: 0.82},
-      {text: 'after', startSec: 0.82, endSec: 1.18},
-      {text: 'Tiberius', startSec: 1.18, endSec: 1.82},
-      {text: 'arrives', startSec: 1.82, endSec: 2.25}
-    ]
-  },
-  segments: [
-    {
-      segmentId: 1,
-      segmentType: 'intro_animation',
-      assetType: 'video',
-      src: 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4',
-      durationSec: 2,
-      transition: '',
-      zoom: '',
-      chapterTitle: 'Demo'
-    },
-    {
-      segmentId: 2,
-      segmentType: 'ai_image',
-      assetType: 'image',
-      src: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1280&q=80',
-      durationSec: 2.5,
-      transition: 'wipeleft',
-      zoom: 'subtle',
-      chapterTitle: 'Demo'
-    }
-  ]
+const getSchemaForComposition = (compositionId) => {
+  if (compositionId === 'PaintExplainerChunk') {
+    return PaintExplainerChunkPropsSchema;
+  }
+
+  if (compositionId === 'ExplainerDeck') {
+    return ExplainerDeckPropsSchema;
+  }
+
+  return null;
 };
 
 const getRemotionCommand = (subcommandArgs) => {
@@ -332,8 +291,11 @@ app.get('/health', (_req, res) => {
 
 app.get('/sample-payload', (_req, res) => {
   res.json({
-    explainerDeck: {compositionId: 'ExplainerDeck', props: defaultProps},
-    paintExplainerChunk: {compositionId: 'PaintExplainerChunk', props: defaultChunkProps}
+    explainerDeck: {compositionId: 'ExplainerDeck', props: defaultExplainerDeckProps},
+    paintExplainerChunk: {
+      compositionId: 'PaintExplainerChunk',
+      props: defaultPaintExplainerChunkProps,
+    },
   });
 });
 
@@ -343,18 +305,40 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
   await cleanupDirectory(tempDir, tempFileTtlSeconds);
   await cleanupDirectory(rendersDir, localRenderTtlSeconds);
 
-  const props = req.body?.props ?? defaultProps;
   const compositionId =
     req.body?.compositionId ||
     req.body?.props?.compositionId ||
-    (Array.isArray(props?.segments) ? 'PaintExplainerChunk' : 'ExplainerDeck');
+    (Array.isArray(req.body?.props?.segments) ? 'PaintExplainerChunk' : 'ExplainerDeck');
+  const props = req.body?.props ?? getDefaultPropsForComposition(compositionId);
   const requestedFileName = req.body?.fileName || 'render.mp4';
   const safeName = resolveOutputFileName(requestedFileName);
   const outputPath = path.join(rendersDir, safeName);
   const propsPath = path.join(tempDir, `${crypto.randomUUID()}.json`);
+  const schema = getSchemaForComposition(compositionId);
 
   try {
-    await writeFile(propsPath, JSON.stringify(props), 'utf8');
+    if (!schema) {
+      res.status(400).json({
+        ok: false,
+        message: `Unknown compositionId "${compositionId}"`,
+      });
+      return;
+    }
+
+    const parsedProps = schema.safeParse(props);
+    if (!parsedProps.success) {
+      res.status(400).json({
+        ok: false,
+        message: 'Invalid composition props',
+        issues: parsedProps.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+      return;
+    }
+
+    await writeFile(propsPath, JSON.stringify(parsedProps.data), 'utf8');
 
     const renderArgs = [
       'render',
