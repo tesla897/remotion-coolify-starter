@@ -1,7 +1,7 @@
 import express from 'express';
 import {spawn} from 'node:child_process';
 import {createReadStream} from 'node:fs';
-import {mkdir, rm, writeFile} from 'node:fs/promises';
+import {mkdir, readdir, rm, stat, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
@@ -30,6 +30,9 @@ const s3Region = !s3RegionValue || s3RegionValue.toLowerCase() === 'none' ? 'us-
 const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE !== 'false';
 const s3ObjectPrefix = (process.env.S3_OBJECT_PREFIX || 'remotion-renders').replace(/^\/+|\/+$/g, '');
 const s3SignedUrlTtlSeconds = Number(process.env.S3_SIGNED_URL_TTL_SECONDS || 3600);
+const alwaysUniqueFileNames = process.env.ALWAYS_UNIQUE_FILE_NAMES !== 'false';
+const tempFileTtlSeconds = Number(process.env.TEMP_FILE_TTL_SECONDS || 86400);
+const localRenderTtlSeconds = Number(process.env.LOCAL_RENDER_TTL_SECONDS || 0);
 const storageEnabled = Boolean(s3Endpoint && s3AccessKey && s3SecretKey && s3BucketName);
 
 const s3Client = storageEnabled
@@ -191,6 +194,52 @@ const safeRemoveFile = async (filePath) => {
   }
 };
 
+const cleanupDirectory = async (dirPath, maxAgeSeconds) => {
+  if (!maxAgeSeconds || maxAgeSeconds <= 0) {
+    return;
+  }
+
+  try {
+    const cutoffMs = Date.now() - maxAgeSeconds * 1000;
+    const dirEntries = await readdir(dirPath, {withFileTypes: true});
+
+    for (const entry of dirEntries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const fullPath = path.join(dirPath, entry.name);
+      const entryStat = await stat(fullPath);
+      if (entryStat.mtimeMs < cutoffMs) {
+        await safeRemoveFile(fullPath);
+      }
+    }
+  } catch {
+    // Best-effort cleanup.
+  }
+};
+
+const ensureMp4Extension = (fileName) => {
+  const parsed = path.parse(fileName || '');
+  const ext = parsed.ext || '.mp4';
+  return `${parsed.name || 'render'}${ext}`;
+};
+
+const resolveOutputFileName = (requestedFileName) => {
+  const sanitized = ensureMp4Extension(
+    String(requestedFileName || 'render.mp4').replace(/[^a-zA-Z0-9._-]/g, '-')
+  );
+
+  if (!alwaysUniqueFileNames) {
+    return sanitized;
+  }
+
+  const parsed = path.parse(sanitized);
+  const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  const suffix = crypto.randomUUID().slice(0, 8);
+  return `${parsed.name}-${timestamp}-${suffix}${parsed.ext || '.mp4'}`;
+};
+
 const getObjectKey = (fileName) => {
   return [s3ObjectPrefix, fileName].filter(Boolean).join('/');
 };
@@ -246,9 +295,12 @@ app.get('/sample-payload', (_req, res) => {
 app.post('/render', requireRenderApiKey, async (req, res) => {
   await mkdir(rendersDir, {recursive: true});
   await mkdir(tempDir, {recursive: true});
+  await cleanupDirectory(tempDir, tempFileTtlSeconds);
+  await cleanupDirectory(rendersDir, localRenderTtlSeconds);
 
   const props = req.body?.props ?? defaultProps;
-  const safeName = (req.body?.fileName || `render-${Date.now()}.mp4`).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const requestedFileName = req.body?.fileName || 'render.mp4';
+  const safeName = resolveOutputFileName(requestedFileName);
   const outputPath = path.join(rendersDir, safeName);
   const propsPath = path.join(tempDir, `${crypto.randomUUID()}.json`);
 
@@ -323,11 +375,14 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
         }
 
         let url = `${getOriginFromRequest(req)}/renders/${safeName}`;
+        let signedUrl = null;
         let storage = {mode: 'local'};
+        let responseOutputPath = outputPath;
 
         if (storageEnabled) {
           const uploaded = await uploadRenderAndGetUrl({fileName: safeName, filePath: outputPath});
           url = uploaded.signedUrl;
+          signedUrl = uploaded.signedUrl;
           storage = {
             mode: 's3',
             bucket: uploaded.bucket,
@@ -335,13 +390,16 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
             expiresInSeconds: s3SignedUrlTtlSeconds
           };
           await safeRemoveFile(outputPath);
+          responseOutputPath = null;
         }
 
         res.json({
           ok: true,
+          requestedFileName,
           fileName: safeName,
-          outputPath,
+          outputPath: responseOutputPath,
           url,
+          signedUrl,
           storage,
           stdout
         });
@@ -397,6 +455,7 @@ process.on('SIGTERM', shutdown);
 server.listen(port, '0.0.0.0', () => {
   console.log(`Remotion render service listening on :${port}`);
   console.log(`Render storage mode: ${storageEnabled ? 's3-signed-url' : 'local'}`);
+  console.log(`Unique output names: ${alwaysUniqueFileNames ? 'enabled' : 'disabled'}`);
   if (storageEnabled) {
     console.log(`S3 bucket: ${s3BucketName}`);
     console.log(`S3 object prefix: ${s3ObjectPrefix || '(root)'}`);

@@ -98,6 +98,7 @@ curl -X POST http://localhost:3000/render \
    - `STUDIO_ENABLED=true`
    - `STUDIO_PORT=3100`
    - `RENDER_API_KEY=your-secret-key`
+   - `ALWAYS_UNIQUE_FILE_NAMES=true`
    - `S3_ENDPOINT_URL=https://your-minio-or-s3-endpoint`
    - `S3_ACCESS_KEY=...`
    - `S3_SECRET_KEY=...`
@@ -106,6 +107,8 @@ curl -X POST http://localhost:3000/render \
    - `S3_FORCE_PATH_STYLE=true`
    - `S3_OBJECT_PREFIX=remotion-renders`
    - `S3_SIGNED_URL_TTL_SECONDS=3600`
+   - `TEMP_FILE_TTL_SECONDS=86400`
+   - `LOCAL_RENDER_TTL_SECONDS=0`
 6. Deploy.
 7. Route your Pangolin domain to the Coolify service.
 
@@ -118,8 +121,54 @@ curl -X POST http://localhost:3000/render \
 - If `RENDER_API_KEY` is set, `/render` and the local `/renders/*` fallback route require either:
   - `x-api-key: your-secret-key`
   - `Authorization: Bearer your-secret-key`
+- By default, returned output filenames are made unique to avoid accidental overwrites. Set `ALWAYS_UNIQUE_FILE_NAMES=false` if you need exact filenames.
+- Temporary JSON props are cleaned up automatically. You can tune retention with `TEMP_FILE_TTL_SECONDS`.
+- In local-file mode, old renders are kept forever by default. Set `LOCAL_RENDER_TTL_SECONDS` if you want automatic cleanup there too.
 - For production, you will likely want:
   - object storage upload after render
   - request queueing
   - cleanup of old renders
   - concurrency limits
+
+## Making It A Real Render Farm
+
+To turn this from a useful starter into a production render farm, the usual next steps are:
+
+1. Add a queue.
+   Put render jobs into Redis, Postgres, or NATS instead of rendering inline inside the HTTP request.
+
+2. Split API and workers.
+   The API should accept jobs and return a job ID. One or more worker containers should do the actual rendering.
+
+3. Add job status endpoints.
+   Typical flow:
+   - `POST /render-jobs`
+   - `GET /render-jobs/:id`
+   - `GET /render-jobs/:id/result`
+
+4. Limit concurrency.
+   Set a max number of simultaneous renders per worker so one burst of requests does not exhaust CPU or RAM.
+
+5. Persist job metadata.
+   Store:
+   - requested props
+   - status
+   - start/end times
+   - failure reason
+   - storage key
+   - signed URL expiry
+
+6. Add retries and dead-letter handling.
+   Some jobs will fail due to browser crashes, timeouts, or bad inputs. A finished system needs controlled retries.
+
+7. Move cleanup into a scheduled process.
+   Expired temp files, old local renders, and stale job records should be cleaned by a worker or cron task.
+
+8. Add structured logging and metrics.
+   Track render duration, queue depth, failures, memory usage, and worker saturation.
+
+9. Add input validation.
+   Validate composition props and reject bad payloads before they hit the renderer.
+
+10. Add horizontal scaling.
+   Run multiple workers behind one API so you can scale render capacity independently from the control plane.
