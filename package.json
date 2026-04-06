@@ -9,6 +9,8 @@
     "start": "node server/index.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1024.0",
+    "@aws-sdk/s3-request-presigner": "^3.1024.0",
     "@remotion/cli": "4.0.445",
     "@remotion/transitions": "4.0.445",
     "express": "4.21.2",

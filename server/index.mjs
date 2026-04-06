@@ -1,11 +1,14 @@
 import express from 'express';
 import {spawn} from 'node:child_process';
-import {mkdir, writeFile} from 'node:fs/promises';
+import {createReadStream} from 'node:fs';
+import {mkdir, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import httpProxy from 'http-proxy';
+import {GetObjectCommand, PutObjectCommand, S3Client} from '@aws-sdk/client-s3';
+import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,15 +16,36 @@ const projectRoot = path.resolve(__dirname, '..');
 const rendersDir = path.join(projectRoot, 'renders');
 const tempDir = path.join(projectRoot, '.tmp');
 
-const app = express();
-app.use(express.json({limit: '5mb'}));
-app.use('/renders', express.static(rendersDir));
-
 const port = Number(process.env.PORT || 3000);
 const studioPort = Number(process.env.STUDIO_PORT || 3100);
 const studioEnabled = process.env.STUDIO_ENABLED === 'true';
 const studioTarget = `http://127.0.0.1:${studioPort}`;
 const renderApiKey = process.env.RENDER_API_KEY?.trim() || '';
+const s3Endpoint = process.env.S3_ENDPOINT_URL?.trim() || '';
+const s3AccessKey = process.env.S3_ACCESS_KEY?.trim() || '';
+const s3SecretKey = process.env.S3_SECRET_KEY?.trim() || '';
+const s3BucketName = process.env.S3_BUCKET_NAME?.trim() || '';
+const s3RegionValue = process.env.S3_REGION?.trim();
+const s3Region = !s3RegionValue || s3RegionValue.toLowerCase() === 'none' ? 'us-east-1' : s3RegionValue;
+const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE !== 'false';
+const s3ObjectPrefix = (process.env.S3_OBJECT_PREFIX || 'remotion-renders').replace(/^\/+|\/+$/g, '');
+const s3SignedUrlTtlSeconds = Number(process.env.S3_SIGNED_URL_TTL_SECONDS || 3600);
+const storageEnabled = Boolean(s3Endpoint && s3AccessKey && s3SecretKey && s3BucketName);
+
+const s3Client = storageEnabled
+  ? new S3Client({
+      endpoint: s3Endpoint,
+      region: s3Region,
+      forcePathStyle: s3ForcePathStyle,
+      credentials: {
+        accessKeyId: s3AccessKey,
+        secretAccessKey: s3SecretKey
+      }
+    })
+  : null;
+
+const app = express();
+app.use(express.json({limit: '5mb'}));
 
 const defaultProps = {
   slides: [
@@ -108,7 +132,7 @@ const requireRenderApiKey = (req, res, next) => {
   const providedBuffer = Buffer.from(providedKey);
   const expectedBuffer = Buffer.from(renderApiKey);
 
-  if (providedKey && providedBuffer.length == expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+  if (providedKey && providedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
     next();
     return;
   }
@@ -119,6 +143,8 @@ const requireRenderApiKey = (req, res, next) => {
     hint: 'Provide x-api-key or Authorization: Bearer <key>'
   });
 };
+
+app.use('/renders', requireRenderApiKey, express.static(rendersDir));
 
 const startStudio = () => {
   if (!studioEnabled) {
@@ -135,7 +161,7 @@ const startStudio = () => {
       BROWSER: 'none',
       CI: '1'
     },
-      stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe']
   });
 
   child.stdout.on('data', (chunk) => {
@@ -153,6 +179,62 @@ const startStudio = () => {
   return child;
 };
 
+const safeRemoveFile = async (filePath) => {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    await rm(filePath, {force: true});
+  } catch {
+    // Best-effort cleanup.
+  }
+};
+
+const getObjectKey = (fileName) => {
+  return [s3ObjectPrefix, fileName].filter(Boolean).join('/');
+};
+
+const uploadRenderAndGetUrl = async ({fileName, filePath}) => {
+  if (!s3Client) {
+    return null;
+  }
+
+  const objectKey = getObjectKey(fileName);
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: s3BucketName,
+      Key: objectKey,
+      Body: createReadStream(filePath),
+      ContentType: 'video/mp4'
+    })
+  );
+
+  const signedUrl = await getSignedUrl(
+    s3Client,
+    new GetObjectCommand({
+      Bucket: s3BucketName,
+      Key: objectKey,
+      ResponseContentType: 'video/mp4',
+      ResponseContentDisposition: `inline; filename="${fileName}"`
+    }),
+    {expiresIn: s3SignedUrlTtlSeconds}
+  );
+
+  return {
+    bucket: s3BucketName,
+    key: objectKey,
+    signedUrl
+  };
+};
+
+const getOriginFromRequest = (req) => {
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const protocol = typeof forwardedProto === 'string' ? forwardedProto : req.protocol;
+  return `${protocol}://${req.get('host')}`;
+};
+
 app.get('/health', (_req, res) => {
   res.json({ok: true});
 });
@@ -162,15 +244,15 @@ app.get('/sample-payload', (_req, res) => {
 });
 
 app.post('/render', requireRenderApiKey, async (req, res) => {
+  await mkdir(rendersDir, {recursive: true});
+  await mkdir(tempDir, {recursive: true});
+
+  const props = req.body?.props ?? defaultProps;
+  const safeName = (req.body?.fileName || `render-${Date.now()}.mp4`).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const outputPath = path.join(rendersDir, safeName);
+  const propsPath = path.join(tempDir, `${crypto.randomUUID()}.json`);
+
   try {
-    await mkdir(rendersDir, {recursive: true});
-    await mkdir(tempDir, {recursive: true});
-
-    const props = req.body?.props ?? defaultProps;
-    const safeName = (req.body?.fileName || `render-${Date.now()}.mp4`).replace(/[^a-zA-Z0-9._-]/g, '-');
-    const outputPath = path.join(rendersDir, safeName);
-    const propsPath = path.join(tempDir, `${crypto.randomUUID()}.json`);
-
     await writeFile(propsPath, JSON.stringify(props), 'utf8');
 
     const renderArgs = [
@@ -196,6 +278,7 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
 
     let stdout = '';
     let stderr = '';
+    let responseSent = false;
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
@@ -205,30 +288,74 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
       stderr += chunk.toString();
     });
 
-    child.on('close', (code) => {
-      if (code !== 0) {
-        res.status(500).json({
-          ok: false,
-          message: 'Render failed',
-          code,
-          stdout,
-          stderr
-        });
+    child.on('error', async (error) => {
+      if (responseSent) {
         return;
       }
 
-      const forwardedProto = req.headers['x-forwarded-proto'];
-      const protocol = typeof forwardedProto === 'string' ? forwardedProto : req.protocol;
-      const origin = `${protocol}://${req.get('host')}`;
-      res.json({
-        ok: true,
-        fileName: safeName,
-        outputPath,
-        url: `${origin}/renders/${safeName}`,
-        stdout
+      responseSent = true;
+      await safeRemoveFile(propsPath);
+      res.status(500).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Render process failed to start'
       });
     });
+
+    child.on('close', async (code) => {
+      if (responseSent) {
+        return;
+      }
+
+      responseSent = true;
+
+      try {
+        await safeRemoveFile(propsPath);
+
+        if (code !== 0) {
+          res.status(500).json({
+            ok: false,
+            message: 'Render failed',
+            code,
+            stdout,
+            stderr
+          });
+          return;
+        }
+
+        let url = `${getOriginFromRequest(req)}/renders/${safeName}`;
+        let storage = {mode: 'local'};
+
+        if (storageEnabled) {
+          const uploaded = await uploadRenderAndGetUrl({fileName: safeName, filePath: outputPath});
+          url = uploaded.signedUrl;
+          storage = {
+            mode: 's3',
+            bucket: uploaded.bucket,
+            key: uploaded.key,
+            expiresInSeconds: s3SignedUrlTtlSeconds
+          };
+          await safeRemoveFile(outputPath);
+        }
+
+        res.json({
+          ok: true,
+          fileName: safeName,
+          outputPath,
+          url,
+          storage,
+          stdout
+        });
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          message: error instanceof Error ? error.message : 'Unknown error',
+          stdout,
+          stderr
+        });
+      }
+    });
   } catch (error) {
+    await safeRemoveFile(propsPath);
     res.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown error'
@@ -269,6 +396,11 @@ process.on('SIGTERM', shutdown);
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`Remotion render service listening on :${port}`);
+  console.log(`Render storage mode: ${storageEnabled ? 's3-signed-url' : 'local'}`);
+  if (storageEnabled) {
+    console.log(`S3 bucket: ${s3BucketName}`);
+    console.log(`S3 object prefix: ${s3ObjectPrefix || '(root)'}`);
+  }
   if (studioEnabled) {
     console.log(`Remotion Studio proxied via :${port} -> ${studioTarget}`);
   }

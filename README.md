@@ -8,7 +8,8 @@ A minimal self-hosted Remotion render service for Coolify + Pangolin.
 - An HTTP API to render videos on demand
 - Optional API key protection for `/render`
 - A Dockerfile that is straightforward to deploy in Coolify
-- Static hosting for rendered files from `/renders`
+- Local fallback hosting for rendered files from `/renders`
+- Optional MinIO/S3 upload with signed download URLs
 
 ## Endpoints
 
@@ -16,6 +17,7 @@ A minimal self-hosted Remotion render service for Coolify + Pangolin.
 - `GET /sample-payload`
 - `POST /render`
 - `GET /renders/<file>.mp4`
+  This local fallback route uses the same API key middleware when `RENDER_API_KEY` is set.
 
 ## Local setup
 
@@ -96,6 +98,14 @@ curl -X POST http://localhost:3000/render \
    - `STUDIO_ENABLED=true`
    - `STUDIO_PORT=3100`
    - `RENDER_API_KEY=your-secret-key`
+   - `S3_ENDPOINT_URL=https://your-minio-or-s3-endpoint`
+   - `S3_ACCESS_KEY=...`
+   - `S3_SECRET_KEY=...`
+   - `S3_BUCKET_NAME=remotion-renders`
+   - `S3_REGION=us-east-1`
+   - `S3_FORCE_PATH_STYLE=true`
+   - `S3_OBJECT_PREFIX=remotion-renders`
+   - `S3_SIGNED_URL_TTL_SECONDS=3600`
 6. Deploy.
 7. Route your Pangolin domain to the Coolify service.
 
@@ -103,8 +113,9 @@ curl -X POST http://localhost:3000/render \
 
 - This is a starter, not a finished render farm.
 - Rendered videos are written to `/app/renders`.
+- If the S3 env vars are configured, the app uploads the finished MP4 to object storage and returns a signed URL instead of the local `/renders/...` URL.
 - Studio is disabled by default. Set `STUDIO_ENABLED=true` only when you want temporary browser access to Remotion Studio.
-- If `RENDER_API_KEY` is set, `/render` requires either:
+- If `RENDER_API_KEY` is set, `/render` and the local `/renders/*` fallback route require either:
   - `x-api-key: your-secret-key`
   - `Authorization: Bearer your-secret-key`
 - For production, you will likely want:
