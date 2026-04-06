@@ -78,6 +78,36 @@ const defaultProps = {
   ]
 };
 
+const defaultChunkProps = {
+  compositionId: 'PaintExplainerChunk',
+  fps: 24,
+  width: 1280,
+  height: 720,
+  audioUrl: null,
+  segments: [
+    {
+      segmentId: 1,
+      segmentType: 'intro_animation',
+      assetType: 'video',
+      src: 'https://samplelib.com/lib/preview/mp4/sample-5s.mp4',
+      durationSec: 2,
+      transition: '',
+      zoom: '',
+      chapterTitle: 'Demo'
+    },
+    {
+      segmentId: 2,
+      segmentType: 'ai_image',
+      assetType: 'image',
+      src: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1280&q=80',
+      durationSec: 2.5,
+      transition: 'wipeleft',
+      zoom: 'subtle',
+      chapterTitle: 'Demo'
+    }
+  ]
+};
+
 const getRemotionCommand = (subcommandArgs) => {
   if (process.platform === 'win32') {
     return {
@@ -289,7 +319,10 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/sample-payload', (_req, res) => {
-  res.json({props: defaultProps});
+  res.json({
+    explainerDeck: {compositionId: 'ExplainerDeck', props: defaultProps},
+    paintExplainerChunk: {compositionId: 'PaintExplainerChunk', props: defaultChunkProps}
+  });
 });
 
 app.post('/render', requireRenderApiKey, async (req, res) => {
@@ -299,6 +332,10 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
   await cleanupDirectory(rendersDir, localRenderTtlSeconds);
 
   const props = req.body?.props ?? defaultProps;
+  const compositionId =
+    req.body?.compositionId ||
+    req.body?.props?.compositionId ||
+    (Array.isArray(props?.segments) ? 'PaintExplainerChunk' : 'ExplainerDeck');
   const requestedFileName = req.body?.fileName || 'render.mp4';
   const safeName = resolveOutputFileName(requestedFileName);
   const outputPath = path.join(rendersDir, safeName);
@@ -310,7 +347,7 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
     const renderArgs = [
       'render',
       'src/index.jsx',
-      'ExplainerDeck',
+      compositionId,
       outputPath,
       '--props',
       propsPath
@@ -395,6 +432,7 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
 
         res.json({
           ok: true,
+          compositionId,
           requestedFileName,
           fileName: safeName,
           outputPath: responseOutputPath,

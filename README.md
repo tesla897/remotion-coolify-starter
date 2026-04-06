@@ -19,6 +19,10 @@ A minimal self-hosted Remotion render service for Coolify + Pangolin.
 - `GET /renders/<file>.mp4`
   This local fallback route uses the same API key middleware when `RENDER_API_KEY` is set.
 
+`/sample-payload` now returns two example payloads:
+- `explainerDeck`
+- `paintExplainerChunk`
+
 ## Local setup
 
 ```bash
@@ -117,6 +121,9 @@ curl -X POST http://localhost:3000/render \
 - This is a starter, not a finished render farm.
 - Rendered videos are written to `/app/renders`.
 - If the S3 env vars are configured, the app uploads the finished MP4 to object storage and returns a signed URL instead of the local `/renders/...` URL.
+- The API supports both:
+  - `ExplainerDeck` for the original demo slides
+  - `PaintExplainerChunk` for the image/video segment payload used by the new Paint Explainer workflows
 - Studio is disabled by default. Set `STUDIO_ENABLED=true` only when you want temporary browser access to Remotion Studio.
 - If `RENDER_API_KEY` is set, `/render` and the local `/renders/*` fallback route require either:
   - `x-api-key: your-secret-key`
