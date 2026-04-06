@@ -2,11 +2,11 @@ import React from 'react';
 import {
   AbsoluteFill,
   Audio,
+  Easing,
   Img,
   OffthreadVideo,
   Sequence,
   interpolate,
-  spring,
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
@@ -60,22 +60,21 @@ const getPresentation = (transition, durationInFrames) => {
 
 const SegmentImage = ({src, zoom, logoUrl}) => {
   const frame = useCurrentFrame();
-  const {durationInFrames, width, height, fps} = useVideoConfig();
+  const {durationInFrames, width, height} = useVideoConfig();
   const isSubtleZoom = zoom === 'subtle';
-  const progress = spring({
+  const zoomProgress = interpolate(
     frame,
-    fps,
-    config: {
-      damping: 200,
-      stiffness: 80,
-      mass: 0.8,
+    [0, Math.max(1, durationInFrames - 1)],
+    [0, 1],
+    {
+      easing: Easing.bezier(0.22, 0.61, 0.36, 1),
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
     },
-    durationInFrames,
-    durationRestThreshold: 0.001,
-  });
+  );
 
   const scale = isSubtleZoom
-    ? interpolate(progress, [0, 1], [1, 1.05], {extrapolateRight: 'clamp'})
+    ? interpolate(zoomProgress, [0, 1], [1, 1.05], {extrapolateRight: 'clamp'})
     : 1;
 
   return (

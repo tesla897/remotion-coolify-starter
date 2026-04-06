@@ -102,6 +102,9 @@ curl -X POST http://localhost:3000/render \
    - `STUDIO_ENABLED=true`
    - `STUDIO_PORT=3100`
    - `RENDER_API_KEY=your-secret-key`
+   - `REMOTION_CODEC=h264`
+   - `REMOTION_CRF=23`
+   - `REMOTION_X264_PRESET=medium`
    - `ALWAYS_UNIQUE_FILE_NAMES=true`
    - `S3_ENDPOINT_URL=https://your-minio-or-s3-endpoint`
    - `S3_ACCESS_KEY=...`
@@ -132,6 +135,7 @@ curl -X POST http://localhost:3000/render \
 - By default, returned output filenames are made unique to avoid accidental overwrites. Set `ALWAYS_UNIQUE_FILE_NAMES=false` if you need exact filenames.
 - Temporary JSON props are cleaned up automatically. You can tune retention with `TEMP_FILE_TTL_SECONDS`.
 - In local-file mode, old renders are kept forever by default. Set `LOCAL_RENDER_TTL_SECONDS` if you want automatic cleanup there too.
+- The render service now defaults to `h264`, `CRF 23`, and `x264 preset medium` to match the old NCA FFmpeg settings more closely.
 - For production, you will likely want:
   - object storage upload after render
   - request queueing

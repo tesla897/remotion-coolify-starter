@@ -33,6 +33,9 @@ const s3SignedUrlTtlSeconds = Number(process.env.S3_SIGNED_URL_TTL_SECONDS || 36
 const alwaysUniqueFileNames = process.env.ALWAYS_UNIQUE_FILE_NAMES !== 'false';
 const tempFileTtlSeconds = Number(process.env.TEMP_FILE_TTL_SECONDS || 86400);
 const localRenderTtlSeconds = Number(process.env.LOCAL_RENDER_TTL_SECONDS || 0);
+const renderCodec = process.env.REMOTION_CODEC?.trim() || 'h264';
+const renderCrf = process.env.REMOTION_CRF?.trim() || '23';
+const renderX264Preset = process.env.REMOTION_X264_PRESET?.trim() || 'medium';
 const storageEnabled = Boolean(s3Endpoint && s3AccessKey && s3SecretKey && s3BucketName);
 
 const s3Client = storageEnabled
@@ -349,6 +352,12 @@ app.post('/render', requireRenderApiKey, async (req, res) => {
       'src/index.jsx',
       compositionId,
       outputPath,
+      '--codec',
+      renderCodec,
+      '--crf',
+      renderCrf,
+      '--x264-preset',
+      renderX264Preset,
       '--props',
       propsPath
     ];
@@ -494,6 +503,9 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`Remotion render service listening on :${port}`);
   console.log(`Render storage mode: ${storageEnabled ? 's3-signed-url' : 'local'}`);
   console.log(`Unique output names: ${alwaysUniqueFileNames ? 'enabled' : 'disabled'}`);
+  console.log(`Render codec: ${renderCodec}`);
+  console.log(`Render CRF: ${renderCrf}`);
+  console.log(`Render x264 preset: ${renderX264Preset}`);
   if (storageEnabled) {
     console.log(`S3 bucket: ${s3BucketName}`);
     console.log(`S3 object prefix: ${s3ObjectPrefix || '(root)'}`);
