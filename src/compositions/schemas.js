@@ -209,14 +209,9 @@ export const getChunkTransitionDurationInFrames = (fps) => {
 };
 
 export const getPaintExplainerChunkDurationInFrames = ({segments = [], fps}) => {
-  const totalSequenceDuration = segments.reduce((acc, segment, index) => {
+  const totalSequenceDuration = segments.reduce((acc, segment) => {
     const segmentFrames = Math.max(1, Math.round((segment.durationSec || 0) * fps));
-    const hasTrailingTransition =
-      index > 1 &&
-      index < segments.length - 1 &&
-      Boolean(normalizeChunkTransition(segment.transition));
-
-    return acc + segmentFrames + (hasTrailingTransition ? getChunkTransitionDurationInFrames(fps) : 0);
+    return acc + segmentFrames;
   }, 0);
 
   return Math.max(totalSequenceDuration, fps);
