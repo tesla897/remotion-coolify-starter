@@ -57,6 +57,15 @@ export const Root = () => {
           width: 1280,
           height: 720,
           audioUrl: null,
+          captions: {
+            words: [
+              {text: 'Fresh', startSec: 0.2, endSec: 0.55},
+              {text: 'air', startSec: 0.55, endSec: 0.82},
+              {text: 'after', startSec: 0.82, endSec: 1.18},
+              {text: 'Tiberius', startSec: 1.18, endSec: 1.82},
+              {text: 'arrives', startSec: 1.82, endSec: 2.25},
+            ],
+          },
           segments: [
             {
               segmentId: 1,

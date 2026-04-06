@@ -18,6 +18,7 @@ const defaultFps = 24;
 const defaultWidth = 1280;
 const defaultHeight = 720;
 const transitionDurationSec = 0.35;
+const captionChunkSize = 5;
 
 const normalizeTransition = (transition) => {
   const value = String(transition || '').toLowerCase();
@@ -155,7 +156,140 @@ const SegmentAsset = ({segment, logoUrl}) => {
   );
 };
 
-export const PaintExplainerChunk = ({segments = [], audioUrl = null, logoUrl = null}) => {
+const normalizeCaptionWords = (words) => {
+  return (Array.isArray(words) ? words : [])
+    .map((word, index) => {
+      const text = String(word?.text ?? word?.word ?? '').trim();
+      if (!text) {
+        return null;
+      }
+
+      const rawStart = Number(word?.startSec ?? word?.start ?? word?.start_ms ?? 0);
+      const rawEnd = Number(word?.endSec ?? word?.end ?? word?.end_ms ?? rawStart);
+      const startSec =
+        Number.isFinite(rawStart) && rawStart > 1000 ? rawStart / 1000 : rawStart;
+      const endSec =
+        Number.isFinite(rawEnd) && rawEnd > 1000 ? rawEnd / 1000 : rawEnd;
+
+      return {
+        id: `${index}-${text}`,
+        text,
+        startSec: Math.max(0, startSec || 0),
+        endSec: Math.max(startSec || 0, endSec || startSec || 0),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startSec - b.startSec);
+};
+
+const buildCaptionChunks = (words) => {
+  const chunks = [];
+
+  for (let index = 0; index < words.length; index += captionChunkSize) {
+    const slice = words.slice(index, index + captionChunkSize);
+    if (!slice.length) {
+      continue;
+    }
+
+    chunks.push({
+      id: `chunk-${index}`,
+      startSec: slice[0].startSec,
+      endSec: slice[slice.length - 1].endSec,
+      words: slice,
+    });
+  }
+
+  return chunks;
+};
+
+const CaptionOverlay = ({words = []}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const currentSec = frame / fps;
+  const normalizedWords = normalizeCaptionWords(words);
+  const chunks = buildCaptionChunks(normalizedWords);
+
+  if (!chunks.length) {
+    return null;
+  }
+
+  const activeChunk =
+    chunks.find((chunk) => currentSec >= chunk.startSec && currentSec <= chunk.endSec + 0.05) ??
+    chunks.find((chunk) => currentSec < chunk.startSec) ??
+    chunks[chunks.length - 1];
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: 64,
+        right: 64,
+        bottom: 44,
+        display: 'flex',
+        justifyContent: 'center',
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: '88%',
+          padding: '18px 24px',
+          borderRadius: 24,
+          backgroundColor: 'rgba(0, 0, 0, 0.68)',
+          boxShadow: '0 10px 24px rgba(0, 0, 0, 0.28)',
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+          gap: '0 12px',
+        }}
+      >
+        {activeChunk.words.map((word) => {
+          const isActive = currentSec >= word.startSec && currentSec <= word.endSec + 0.04;
+          const scale = isActive
+            ? interpolate(
+                currentSec,
+                [word.startSec, Math.max(word.startSec + 0.001, word.endSec)],
+                [1.04, 1.0],
+                {
+                  easing: Easing.out(Easing.quad),
+                  extrapolateLeft: 'clamp',
+                  extrapolateRight: 'clamp',
+                },
+              )
+            : 1;
+
+          return (
+            <span
+              key={word.id}
+              style={{
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 900,
+                fontSize: 46,
+                lineHeight: 1.12,
+                letterSpacing: 0.3,
+                color: isActive ? '#ffd84d' : '#ffffff',
+                textTransform: 'uppercase',
+                transform: `scale(${scale})`,
+                transformOrigin: 'center bottom',
+                textShadow:
+                  '0 4px 0 rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.55), 0 0 16px rgba(0,0,0,0.35)',
+              }}
+            >
+              {word.text}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+export const PaintExplainerChunk = ({
+  segments = [],
+  audioUrl = null,
+  logoUrl = null,
+  captions = null,
+}) => {
   const {fps} = useVideoConfig();
   const transitionFrames = Math.max(1, Math.round(transitionDurationSec * fps));
 
@@ -188,6 +322,7 @@ export const PaintExplainerChunk = ({segments = [], audioUrl = null, logoUrl = n
           );
         })}
       </TransitionSeries>
+      <CaptionOverlay words={captions?.words ?? []} />
     </AbsoluteFill>
   );
 };
